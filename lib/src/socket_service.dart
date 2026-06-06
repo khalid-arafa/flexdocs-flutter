@@ -51,7 +51,9 @@ class SocketService {
           .setAuth({
             'projectToken': _credentials.projectToken,
             'projectCode': _credentials.projectCode,
-            if (userToken != null) 'token': userToken,
+            // Server's socketAuth reads `userToken` (not `token`) from the
+            // handshake to set socket.sender.
+            if (userToken != null) 'userToken': userToken,
           })
           .enableReconnection()
           .setReconnectionDelay(_options.reconnectionDelay)
@@ -68,6 +70,18 @@ class SocketService {
     _socket!.onConnect((_) {
       _connected = true;
       logger.info('Socket connected');
+
+      // Re-assert the user identity on every (re)connect. The server's
+      // socketColGuard runs a read-rule check against socket.sender, which is
+      // only set when the handshake carried `userToken` or after a
+      // `set-user-token` emit. Emitting here (not just once) keeps the sender
+      // bound across reconnects.
+      if (_options.getToken != null) {
+        _options.getToken!().then((token) {
+          _socket?.emit('set-user-token', token);
+        }).catchError((_) {});
+      }
+
       _connectionCompleter?.complete(true);
       _connectionCompleter = null;
       _options.onConnect?.call();
@@ -124,8 +138,11 @@ class SocketService {
     _socket!.io.options?['auth'] = {
       'projectToken': _credentials.projectToken,
       'projectCode': _credentials.projectCode,
-      if (token != null) 'token': token,
+      if (token != null) 'userToken': token,
     };
+    // Also push the identity over the live socket so the change applies
+    // without waiting for a reconnect.
+    _socket!.emit('set-user-token', token);
   }
 
   // ---------------------------------------------------------------------------
@@ -139,7 +156,10 @@ class SocketService {
   /// to stop watching.
   Stream<CollectionChangeEvent> watchCol(String colPath) {
     final controller = StreamController<CollectionChangeEvent>();
-    final eventName = 'col:$colPath';
+    // Server emits `update:<projectCode>/<col>` (see db.sockets.js
+    // sendUpdateCollectionStreamEvent). colPath here is the bare collection
+    // name (e.g. "expenses").
+    final eventName = 'update:${_credentials.projectCode}/$colPath';
 
     void onData(dynamic data) {
       if (data is Map<String, dynamic>) {
@@ -160,7 +180,7 @@ class SocketService {
 
     // Only subscribe on first watcher
     if (_watchRefCounts[eventName] == 1) {
-      _socket?.emit('watch-col-updates', colPath);
+      _socket?.emit('watch-col-updates', {'col': colPath});
     }
 
     _socket?.on(eventName, onData);
@@ -173,7 +193,7 @@ class SocketService {
       final count = (_watchRefCounts[eventName] ?? 1) - 1;
       if (count <= 0) {
         _watchRefCounts.remove(eventName);
-        _socket?.emit('unwatch-col-updates', colPath);
+        _socket?.emit('unwatch-col-updates', {'col': colPath});
       } else {
         _watchRefCounts[eventName] = count;
       }
@@ -188,7 +208,10 @@ class SocketService {
   /// to stop watching.
   Stream<DocumentChangeEvent> watchDoc(String docPath) {
     final controller = StreamController<DocumentChangeEvent>();
-    final eventName = 'doc:$docPath';
+    // Server joins the room named by the document's _id and emits an event of
+    // that same name (see db.sockets.js watch-doc handler). The id is the last
+    // path segment.
+    final eventName = docPath.split('/').last;
 
     void onData(dynamic data) {
       if (data is Map<String, dynamic>) {
@@ -207,7 +230,7 @@ class SocketService {
     _watchRefCounts[eventName] = (_watchRefCounts[eventName] ?? 0) + 1;
 
     if (_watchRefCounts[eventName] == 1) {
-      _socket?.emit('watch-doc-updates', docPath);
+      _socket?.emit('watch-doc', {'path': docPath});
     }
 
     _socket?.on(eventName, onData);

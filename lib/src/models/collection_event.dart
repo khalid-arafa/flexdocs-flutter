@@ -26,9 +26,13 @@ class CollectionChangeEvent {
   factory CollectionChangeEvent.fromMap(Map<String, dynamic> map) {
     return CollectionChangeEvent(
       data: _castList(map['data']),
-      added: _castList(map['added']),
-      updated: _castList(map['updated']),
-      removed: _castList(map['removed']),
+      // The server's socket push uses the keys `add`/`update`/`delete` (see
+      // db.sockets.js sendUpdateCollectionStreamEvent). Map those onto our
+      // fields, keeping the `added`/`updated`/`removed` fallbacks for the
+      // HTTP-snapshot path used by collection_ref.watch()'s initial get().
+      added: _castList(map['add'] ?? map['added']),
+      updated: _castList(map['update'] ?? map['updated']),
+      removed: _castList(map['delete'] ?? map['removed']),
       error: map['error'] as String?,
     );
   }
