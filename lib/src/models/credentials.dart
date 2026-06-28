@@ -14,8 +14,22 @@ class Credentials {
     if (baseUrl.isEmpty) {
       throw ArgumentError('baseUrl is required');
     }
-    if (!baseUrl.startsWith('http://') && !baseUrl.startsWith('https://')) {
-      throw ArgumentError('baseUrl must start with http:// or https://');
+    final uri = Uri.tryParse(baseUrl);
+    if (uri == null || (uri.scheme != 'http' && uri.scheme != 'https')) {
+      throw ArgumentError('baseUrl must be an http:// or https:// URL');
+    }
+    // Require TLS in production. Plaintext http:// is only permitted for local
+    // development (loopback hosts) — otherwise the projectToken and user JWT
+    // would travel in cleartext and be trivially sniffable/MITM-able.
+    final host = uri.host;
+    final isLoopback = host == 'localhost' ||
+        host.endsWith('.localhost') ||
+        host == '127.0.0.1' ||
+        host == '::1';
+    if (uri.scheme == 'http' && !isLoopback) {
+      throw ArgumentError(
+        'baseUrl must use https:// (plaintext http:// is only allowed for localhost)',
+      );
     }
     if (projectCode.isEmpty) {
       throw ArgumentError('projectCode is required');

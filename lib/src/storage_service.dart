@@ -4,6 +4,7 @@ import 'models/upload_progress.dart';
 import 'api_client.dart';
 import 'socket_service.dart';
 import 'custom_upload.dart';
+import 'url_utils.dart';
 
 /// Storage service for file uploads, downloads, and bucket management.
 class StorageService {
@@ -43,7 +44,7 @@ class StorageService {
 
   /// Delete a file by its ID.
   Future<ApiResponse> deleteFile({required String fileId}) async {
-    return _apiClient.delete(url: '$_baseUrl/files/$fileId');
+    return _apiClient.delete(url: '$_baseUrl/files/${encodePathSegment(fileId)}');
   }
 
   /// Build a download URL for a file.
@@ -59,10 +60,11 @@ class StorageService {
     if (size != null) params['size'] = size;
     if (token != null) params['token'] = token;
 
-    final query =
-        params.isNotEmpty ? '?${params.entries.map((e) => '${e.key}=${e.value}').join('&')}' : '';
+    final query = buildQueryString(params);
+    final encodedId = encodePathSegment(fileId);
+    final encodedName = encodePathSegment(filename);
 
-    return '${_credentials.baseUrl}$_baseUrl/files/$fileId/$filename$query';
+    return '${_credentials.baseUrl}$_baseUrl/files/$encodedId/$encodedName$query';
   }
 
   // ---------------------------------------------------------------------------
@@ -92,12 +94,12 @@ class StorageService {
     if (name != null) data['name'] = name;
     if (description != null) data['description'] = description;
 
-    return _apiClient.put(url: '$_baseUrl/buckets/$bucketId', data: data);
+    return _apiClient.put(url: '$_baseUrl/buckets/${encodePathSegment(bucketId)}', data: data);
   }
 
   /// Delete a bucket and its contents.
   Future<ApiResponse> deleteBucket({required String bucketId}) async {
-    return _apiClient.delete(url: '$_baseUrl/buckets/$bucketId');
+    return _apiClient.delete(url: '$_baseUrl/buckets/${encodePathSegment(bucketId)}');
   }
 
   /// Get the contents of a bucket (files and sub-buckets).
@@ -111,7 +113,7 @@ class StorageService {
     if (ipp != null) params['ipp'] = ipp;
 
     return _apiClient.get(
-      url: '$_baseUrl/buckets/$bucketId/content',
+      url: '$_baseUrl/buckets/${encodePathSegment(bucketId)}/content',
       queryParameters: params.isNotEmpty ? params : null,
     );
   }

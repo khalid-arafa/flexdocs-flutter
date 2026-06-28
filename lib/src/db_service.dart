@@ -4,6 +4,7 @@ import 'api_client.dart';
 import 'socket_service.dart';
 import 'document_ref.dart';
 import 'collection_ref.dart';
+import 'url_utils.dart';
 
 /// Database service providing document and collection operations.
 class DbService {
@@ -79,7 +80,7 @@ class DbService {
     required String newName,
   }) async {
     return _apiClient.put(
-      url: '$_baseUrl/collections/$oldName/rename',
+      url: '$_baseUrl/collections/${encodePathSegment(oldName)}/rename',
       data: {'newName': newName},
     );
   }

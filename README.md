@@ -252,6 +252,21 @@ await storage.search(searchTerm: 'vacation', bucketId: 'b1');
 await storage.deleteBucket(bucketId: 'b1');
 ```
 
+## Security
+
+- **Use HTTPS.** The SDK requires an `https://` `baseUrl` in production; plaintext
+  `http://` is only accepted for `localhost`/loopback during development. This keeps
+  your `projectToken` and user JWT off the wire in cleartext.
+- **Store tokens securely.** The SDK never persists tokens itself — it reads them
+  on demand via the `getToken` callback. Keep the user JWT (and any cached
+  `projectToken`) in platform-secure storage such as
+  [`flutter_secure_storage`](https://pub.dev/packages/flutter_secure_storage)
+  (Keychain on iOS, Keystore-backed on Android), **not** `SharedPreferences`,
+  which is plaintext.
+- **Don't put tokens in shareable URLs.** `getFileUrl(..., token: ...)` embeds the
+  token as a query parameter; avoid logging, persisting, or sharing those URLs.
+  Prefer a short-lived, single-use download token from your backend where possible.
+
 ## Configuration
 
 ### Custom options
