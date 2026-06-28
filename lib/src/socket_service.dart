@@ -53,7 +53,7 @@ class SocketService {
             'projectCode': _credentials.projectCode,
             // Server's socketAuth reads `userToken` (not `token`) from the
             // handshake to set socket.sender.
-            if (userToken != null) 'userToken': userToken,
+            'userToken': ?userToken,
           })
           .enableReconnection()
           .setReconnectionDelay(_options.reconnectionDelay)
@@ -138,7 +138,7 @@ class SocketService {
     _socket!.io.options?['auth'] = {
       'projectToken': _credentials.projectToken,
       'projectCode': _credentials.projectCode,
-      if (token != null) 'userToken': token,
+      'userToken': ?token,
     };
     // Also push the identity over the live socket so the change applies
     // without waiting for a reconnect.
