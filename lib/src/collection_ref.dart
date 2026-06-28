@@ -8,6 +8,7 @@ import 'api_client.dart';
 import 'socket_service.dart';
 import 'document_ref.dart';
 import 'logger.dart';
+import 'url_utils.dart';
 
 /// Reference to a collection in FlexDocs with a fluent query builder.
 ///
@@ -57,7 +58,7 @@ class CollectionRef {
   }
 
   /// The API URL for this collection.
-  String get url => '/projects/${_credentials.projectCode}/db/$_colPath';
+  String get url => '/projects/${_credentials.projectCode}/db/${encodePath(_colPath)}';
 
   // ---------------------------------------------------------------------------
   // Query builder (fluent, returns this)

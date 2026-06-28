@@ -6,6 +6,7 @@ import 'models/document_event.dart';
 import 'api_client.dart';
 import 'socket_service.dart';
 import 'logger.dart';
+import 'url_utils.dart';
 
 /// Reference to a single document in a FlexDocs collection.
 ///
@@ -38,7 +39,7 @@ class DocumentRef {
   }
 
   /// The API URL for this document.
-  String get url => '/projects/${_credentials.projectCode}/db/$_docPath';
+  String get url => '/projects/${_credentials.projectCode}/db/${encodePath(_docPath)}';
 
   /// Fetch the document data.
   Future<Map<String, dynamic>?> get() async {
