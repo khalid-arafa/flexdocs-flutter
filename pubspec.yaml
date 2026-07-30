@@ -1,6 +1,6 @@
 name: flexdocs_flutter
 description: "FlexDocs Flutter SDK - Database, Auth, and Storage backend-as-a-service."
-version: 0.0.1
+version: 0.1.0
 homepage:
 
 environment:

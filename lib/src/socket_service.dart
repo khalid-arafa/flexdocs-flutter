@@ -15,13 +15,19 @@ class SocketService {
   final SocketServiceOptions _options;
   io.Socket? _socket;
   bool _connected = false;
+  bool _hasConnected = false;
   Completer<bool>? _connectionCompleter;
 
   /// Active upload trackers keyed by upload key.
   final Map<String, _UploadTracker> _activeUploads = {};
 
-  /// Reference counts for watched paths (to avoid duplicate subscriptions).
-  final Map<String, int> _watchRefCounts = {};
+  /// Active watch subscriptions keyed by the event name the server emits on.
+  /// Carries the subscribe payload as well as the reference count, because the
+  /// server rooms are keyed by socket id and a reconnect has to replay them.
+  final Map<String, _WatchSubscription> _watchSubscriptions = {};
+
+  /// Every open watch controller, so [close] can hand watchers a done event.
+  final Set<StreamController<Object>> _watchControllers = {};
 
   SocketService({
     required Credentials credentials,
@@ -68,23 +74,17 @@ class SocketService {
 
   void _setupListeners() {
     _socket!.onConnect((_) {
+      // A first connect needs no replay: watchCol/watchDoc already emitted
+      // (or buffered) their subscribe for this socket.
+      final reconnected = _hasConnected;
       _connected = true;
+      _hasConnected = true;
       logger.info('Socket connected');
-
-      // Re-assert the user identity on every (re)connect. The server's
-      // socketColGuard runs a read-rule check against socket.sender, which is
-      // only set when the handshake carried `userToken` or after a
-      // `set-user-token` emit. Emitting here (not just once) keeps the sender
-      // bound across reconnects.
-      if (_options.getToken != null) {
-        _options.getToken!().then((token) {
-          _socket?.emit('set-user-token', token);
-        }).catchError((_) {});
-      }
 
       _connectionCompleter?.complete(true);
       _connectionCompleter = null;
-      _options.onConnect?.call();
+
+      _afterConnect(reconnected);
     });
 
     _socket!.onDisconnect((reason) {
@@ -149,13 +149,80 @@ class SocketService {
   // Watch subscriptions
   // ---------------------------------------------------------------------------
 
+  /// Register a watcher of [eventName], subscribing on the first one only.
+  void _subscribe(String eventName, String subscribeEvent, dynamic payload) {
+    final existing = _watchSubscriptions[eventName];
+    if (existing != null) {
+      existing.count++;
+      return;
+    }
+    _watchSubscriptions[eventName] = _WatchSubscription(
+      event: subscribeEvent,
+      payload: payload,
+    );
+    _socket?.emit(subscribeEvent, payload);
+  }
+
+  /// Drop a watcher of [eventName], unsubscribing once the last one is gone.
+  void _unsubscribe(String eventName, String unsubscribeEvent, dynamic payload) {
+    final existing = _watchSubscriptions[eventName];
+    if (existing != null) {
+      existing.count--;
+      if (existing.count > 0) return;
+      _watchSubscriptions.remove(eventName);
+    }
+    _socket?.emit(unsubscribeEvent, payload);
+  }
+
+  /// Re-assert identity, replay subscriptions, then notify the caller.
+  ///
+  /// The order is load-bearing and must not be interleaved:
+  ///
+  ///  1. `set-user-token` first, because the server's socketColGuard checks
+  ///     read rules against `socket.sender`, which only exists once the token
+  ///     lands. A replayed subscribe that overtakes it is silently denied.
+  ///  2. the replay next, while the registry still holds the old watches.
+  ///  3. `onConnect` last. It used to run synchronously here while the replay
+  ///     waited on a microtask, so a consumer that tears down and re-creates
+  ///     its watches in that callback — which is exactly what apps wrote to
+  ///     work around the missing replay — drained the registry before the
+  ///     replay read it, leaving the replay a no-op.
+  Future<void> _afterConnect(bool reconnected) async {
+    if (_options.getToken != null) {
+      try {
+        _socket?.emit('set-user-token', await _options.getToken!());
+      } catch (error) {
+        // An unauthenticated replay still beats no replay: public collections
+        // keep working, and rule-protected ones were already going to fail.
+        logger.warn('Could not refresh token on reconnect: $error');
+      }
+    }
+
+    if (reconnected) _resubscribeAll();
+
+    _options.onConnect?.call();
+  }
+
+  /// Re-emit every tracked subscription.
+  ///
+  /// The server keys its rooms by socket id, so a reconnect arrives with a new
+  /// id and belongs to nothing. It cannot restore the rooms itself — without
+  /// this replay realtime just stops after the first network blip.
+  void _resubscribeAll() {
+    if (_watchSubscriptions.isEmpty) return;
+    for (final sub in _watchSubscriptions.values) {
+      _socket?.emit(sub.event, sub.payload);
+    }
+    logger.info('Re-subscribed ${_watchSubscriptions.length} watch(es)');
+  }
+
   /// Watch a collection for real-time changes.
   ///
   /// Returns a [Stream] of [CollectionChangeEvent]. The stream emits the
   /// initial data snapshot followed by change events. Cancel the subscription
   /// to stop watching.
   Stream<CollectionChangeEvent> watchCol(String colPath) {
-    final controller = StreamController<CollectionChangeEvent>();
+    final controller = StreamController<CollectionChangeEvent>.broadcast();
     // Server emits `update:<projectCode>/<col>` (see db.sockets.js
     // sendUpdateCollectionStreamEvent). colPath here is the bare collection
     // name (e.g. "expenses").
@@ -175,13 +242,8 @@ class SocketService {
       controller.add(CollectionChangeEvent.error(error.toString()));
     }
 
-    // Track reference count
-    _watchRefCounts[eventName] = (_watchRefCounts[eventName] ?? 0) + 1;
-
-    // Only subscribe on first watcher
-    if (_watchRefCounts[eventName] == 1) {
-      _socket?.emit('watch-col-updates', {'col': colPath});
-    }
+    _watchControllers.add(controller);
+    _subscribe(eventName, 'watch-col-updates', {'col': colPath});
 
     _socket?.on(eventName, onData);
     _socket?.on('$eventName:error', onError);
@@ -189,14 +251,8 @@ class SocketService {
     controller.onCancel = () {
       _socket?.off(eventName, onData);
       _socket?.off('$eventName:error', onError);
-
-      final count = (_watchRefCounts[eventName] ?? 1) - 1;
-      if (count <= 0) {
-        _watchRefCounts.remove(eventName);
-        _socket?.emit('unwatch-col-updates', {'col': colPath});
-      } else {
-        _watchRefCounts[eventName] = count;
-      }
+      _watchControllers.remove(controller);
+      _unsubscribe(eventName, 'unwatch-col-updates', {'col': colPath});
     };
 
     return controller.stream;
@@ -207,7 +263,7 @@ class SocketService {
   /// Returns a [Stream] of [DocumentChangeEvent]. Cancel the subscription
   /// to stop watching.
   Stream<DocumentChangeEvent> watchDoc(String docPath) {
-    final controller = StreamController<DocumentChangeEvent>();
+    final controller = StreamController<DocumentChangeEvent>.broadcast();
     // Server joins the room named by the document's _id and emits an event of
     // that same name (see db.sockets.js watch-doc handler). The id is the last
     // path segment.
@@ -227,11 +283,8 @@ class SocketService {
       controller.add(DocumentChangeEvent.error(error.toString()));
     }
 
-    _watchRefCounts[eventName] = (_watchRefCounts[eventName] ?? 0) + 1;
-
-    if (_watchRefCounts[eventName] == 1) {
-      _socket?.emit('watch-doc', {'path': docPath});
-    }
+    _watchControllers.add(controller);
+    _subscribe(eventName, 'watch-doc', {'path': docPath});
 
     _socket?.on(eventName, onData);
     _socket?.on('$eventName:error', onError);
@@ -239,14 +292,8 @@ class SocketService {
     controller.onCancel = () {
       _socket?.off(eventName, onData);
       _socket?.off('$eventName:error', onError);
-
-      final count = (_watchRefCounts[eventName] ?? 1) - 1;
-      if (count <= 0) {
-        _watchRefCounts.remove(eventName);
-        _socket?.emit('unwatch-doc-updates', docPath);
-      } else {
-        _watchRefCounts[eventName] = count;
-      }
+      _watchControllers.remove(controller);
+      _unsubscribe(eventName, 'unwatch-doc-updates', docPath);
     };
 
     return controller.stream;
@@ -431,16 +478,40 @@ class SocketService {
       _cleanupUploadListeners(tracker);
     }
     _activeUploads.clear();
-    _watchRefCounts.clear();
+    _watchSubscriptions.clear();
 
     _socket?.dispose();
     _socket = null;
     _connected = false;
+    _hasConnected = false;
     _connectionCompleter?.complete(false);
     _connectionCompleter = null;
 
+    // Closed last so watchers get a done event instead of a stream that just
+    // goes quiet. close() fires onCancel, which mutates the set — hence a copy.
+    for (final controller in _watchControllers.toList()) {
+      controller.close();
+    }
+    _watchControllers.clear();
+
     logger.info('Socket service closed');
   }
+}
+
+// ---------------------------------------------------------------------------
+// Internal watch subscription
+// ---------------------------------------------------------------------------
+
+class _WatchSubscription {
+  final String event;
+  final dynamic payload;
+
+  int count = 1;
+
+  _WatchSubscription({
+    required this.event,
+    required this.payload,
+  });
 }
 
 // ---------------------------------------------------------------------------

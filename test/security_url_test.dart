@@ -50,6 +50,11 @@ void main() {
         Credentials(baseUrl: 'http://127.0.0.1:8080', projectCode: 'p', projectToken: 't').baseUrl,
         'http://127.0.0.1:8080',
       );
+      // The form dev credential files ship with, e.g. Outlay's api.localhost.
+      expect(
+        Credentials(baseUrl: 'http://api.localhost', projectCode: 'p', projectToken: 't').baseUrl,
+        'http://api.localhost',
+      );
     });
 
     test('rejects plaintext http for a non-loopback host', () {

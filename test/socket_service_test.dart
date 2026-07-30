@@ -121,6 +121,47 @@ void main() {
     });
   });
 
+  group('SocketService watch streams', () {
+    late Credentials creds;
+    late SocketService service;
+
+    setUp(() {
+      creds = Credentials(
+        baseUrl: 'https://api.example.com',
+        projectCode: 'test',
+        projectToken: 'token',
+      );
+      service = SocketService(credentials: creds);
+    });
+
+    test('watchCol allows more than one listener', () {
+      final stream = service.watchCol('users');
+      expect(stream.isBroadcast, isTrue);
+      expect(() => stream.listen((_) {}), returnsNormally);
+      expect(() => stream.listen((_) {}), returnsNormally);
+    });
+
+    test('watchDoc allows more than one listener', () {
+      final stream = service.watchDoc('users/user_1');
+      expect(stream.isBroadcast, isTrue);
+      expect(() => stream.listen((_) {}), returnsNormally);
+      expect(() => stream.listen((_) {}), returnsNormally);
+    });
+
+    test('close sends done to every open watch stream', () async {
+      var colDone = false;
+      var docDone = false;
+      service.watchCol('users').listen(null, onDone: () => colDone = true);
+      service.watchDoc('users/user_1').listen(null, onDone: () => docDone = true);
+
+      service.close();
+      await Future<void>.delayed(Duration.zero);
+
+      expect(colDone, isTrue);
+      expect(docDone, isTrue);
+    });
+  });
+
   group('CollectionChangeEvent', () {
     test('fromMap parses data', () {
       final event = CollectionChangeEvent.fromMap({
