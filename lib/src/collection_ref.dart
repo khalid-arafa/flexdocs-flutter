@@ -225,18 +225,40 @@ class CollectionRef {
   /// Returns a [Stream] that first emits the current data snapshot,
   /// then emits change events from the socket.
   Stream<CollectionChangeEvent> watch() {
+    // Deliberately single-subscription, not .broadcast(). The snapshot above is
+    // added after an async get(), and a broadcast controller drops events with
+    // no listener attached — so any consumer that listens even one microtask
+    // late silently loses the snapshot this method promises. A single-
+    // subscription controller buffers it until someone listens.
+    //
+    // The cost is that a second listen() throws StateError. That is the
+    // pre-existing behaviour, and a loud throw beats the alternative here:
+    // making it broadcast also makes cancel-then-relisten hang forever, since
+    // onCancel fires when the last listener leaves. Serving several widgets
+    // from one watch() needs the last snapshot cached and replayed on listen —
+    // a real feature, not a lifecycle fix.
     final controller = StreamController<CollectionChangeEvent>();
+    StreamSubscription<CollectionChangeEvent>? subscription;
+    var cancelled = false;
+
+    // Assigned before the initial get() is awaited: a consumer that cancels
+    // while that fetch is still in flight must still stop us subscribing.
+    controller.onCancel = () {
+      cancelled = true;
+      subscription?.cancel();
+      subscription = null;
+    };
 
     // Fetch initial data
     get().then((data) {
-      if (!controller.isClosed) {
-        final docs = data
-            .map((e) => e is Map ? Map<String, dynamic>.from(e) : <String, dynamic>{})
-            .toList();
-        controller.add(CollectionChangeEvent(data: docs));
-      }
+      if (cancelled || controller.isClosed) return;
 
-      final subscription = _socketService.watchCol(_colPath).listen(
+      final docs = data
+          .map((e) => e is Map ? Map<String, dynamic>.from(e) : <String, dynamic>{})
+          .toList();
+      controller.add(CollectionChangeEvent(data: docs));
+
+      subscription = _socketService.watchCol(_colPath).listen(
         (event) {
           if (!controller.isClosed) controller.add(event);
         },
@@ -245,14 +267,15 @@ class CollectionRef {
             controller.add(CollectionChangeEvent.error(error.toString()));
           }
         },
+        onDone: () {
+          if (!controller.isClosed) controller.close();
+        },
       );
-
-      controller.onCancel = () {
-        subscription.cancel();
-      };
     }).catchError((Object error) {
       if (!controller.isClosed) {
         controller.add(CollectionChangeEvent.error(error.toString()));
+        // Nothing was subscribed, so this stream has no further events to give.
+        controller.close();
       }
     });
 

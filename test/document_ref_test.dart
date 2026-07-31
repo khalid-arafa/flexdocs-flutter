@@ -6,6 +6,20 @@ import 'package:flexdocs_flutter/src/document_ref.dart';
 import 'package:flexdocs_flutter/src/api_client.dart';
 import 'package:flexdocs_flutter/src/socket_service.dart';
 import 'package:flexdocs_flutter/src/models/credentials.dart';
+import 'package:flexdocs_flutter/src/models/document_event.dart';
+
+/// Counts socket subscriptions so a test can assert none was created.
+class RecordingSocketService extends SocketService {
+  int docWatchCount = 0;
+
+  RecordingSocketService({required super.credentials});
+
+  @override
+  Stream<DocumentChangeEvent> watchDoc(String docPath) {
+    docWatchCount++;
+    return super.watchDoc(docPath);
+  }
+}
 
 class MockHttpAdapter implements HttpClientAdapter {
   final List<RequestOptions> requests = [];
@@ -140,6 +154,82 @@ void main() {
       expect(mockAdapter.requests.first.method, 'DELETE');
       expect(mockAdapter.requests.first.path,
           contains('/projects/myproject/db/users/user_1'));
+    });
+  });
+
+  group('DocumentRef watch', () {
+    late DocumentRef doc;
+
+    setUp(() {
+      doc = DocumentRef(
+        credentials: creds,
+        docPath: 'users/user_1',
+        apiClient: apiClient,
+        socketService: socketService,
+      );
+    });
+
+    // See the note in collection_ref_test.dart: a broadcast controller would
+    // drop this snapshot for any listener that attaches after the initial get()
+    // resolves.
+    test('delivers the initial snapshot to a listener that attaches late', () async {
+      mockAdapter.setResponse(statusCode: 200, data: {'_id': 'user_1'});
+
+      final stream = doc.watch();
+      await Future<void>.delayed(const Duration(milliseconds: 50));
+
+      final received = <DocumentChangeEvent>[];
+      final sub = stream.listen(received.add);
+      await Future<void>.delayed(const Duration(milliseconds: 50));
+
+      expect(received, hasLength(1));
+      expect(received.first.action, DocumentAction.update);
+      await sub.cancel();
+    });
+
+    test('a second listen fails loudly rather than hanging', () async {
+      mockAdapter.setResponse(statusCode: 200, data: {'_id': 'user_1'});
+
+      final stream = doc.watch();
+      final first = stream.listen((_) {});
+      expect(() => stream.listen((_) {}), throwsStateError);
+      await first.cancel();
+    });
+
+    test('cancelling during the initial fetch never subscribes', () async {
+      mockAdapter.setResponse(statusCode: 200, data: {'_id': 'user_1'});
+      final recorder = RecordingSocketService(credentials: creds);
+      final ref = DocumentRef(
+        credentials: creds,
+        docPath: 'users/user_1',
+        apiClient: apiClient,
+        socketService: recorder,
+      );
+
+      final subscription = ref.watch().listen((_) {});
+      await subscription.cancel();
+      await Future<void>.delayed(const Duration(milliseconds: 50));
+
+      expect(recorder.docWatchCount, 0);
+    });
+
+    test('emits the initial document then closes on socket shutdown', () async {
+      mockAdapter.setResponse(
+        statusCode: 200,
+        data: {'_id': 'user_1', 'name': 'Alice'},
+      );
+
+      final events = <DocumentChangeEvent>[];
+      var done = false;
+      doc.watch().listen(events.add, onDone: () => done = true);
+
+      await Future<void>.delayed(const Duration(milliseconds: 50));
+      expect(events, hasLength(1));
+      expect(events.first.doc!['name'], 'Alice');
+
+      socketService.close();
+      await Future<void>.delayed(const Duration(milliseconds: 50));
+      expect(done, isTrue);
     });
   });
 }

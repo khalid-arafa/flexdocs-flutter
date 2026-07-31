@@ -4,6 +4,10 @@ import 'api_client.dart';
 import 'logger.dart';
 
 /// Authentication service for FlexDocs.
+///
+/// There is deliberately no `logout()`: the backend exposes no logout route
+/// and its JWTs are stateless, so ending a session means discarding the token
+/// the app holds (the one it hands back from `ApiClientOptions.getToken`).
 class AuthService {
   final Credentials _credentials;
   final ApiClient _apiClient;
@@ -47,18 +51,21 @@ class AuthService {
     _validatePassword(password);
 
     return _apiClient.post(
-      url: '$_baseUrl/login',
+      url: '$_baseUrl/login-with-email',
       data: {'email': email, 'password': password},
     );
   }
 
   /// Register a new user with email and password.
+  ///
+  /// Roles are not settable here. Self-registration is anonymous, and the
+  /// server ignores a client-supplied `roles` field. Assign roles from an
+  /// admin-authenticated context instead.
   Future<ApiResponse> registerWithEmail({
     required String email,
     required String password,
     String? name,
     String? avatar,
-    List<String>? roles,
   }) async {
     _validateEmail(email);
     _validatePassword(password);
@@ -69,9 +76,8 @@ class AuthService {
     };
     if (name != null) data['name'] = name;
     if (avatar != null) data['avatar'] = avatar;
-    if (roles != null) data['roles'] = roles;
 
-    return _apiClient.post(url: '$_baseUrl/register', data: data);
+    return _apiClient.post(url: '$_baseUrl/register-with-email', data: data);
   }
 
   /// Login with an existing JWT token.
@@ -81,7 +87,7 @@ class AuthService {
     }
 
     return _apiClient.post(
-      url: '$_baseUrl/token-login',
+      url: '$_baseUrl/login-with-token',
       data: {'token': token},
     );
   }
@@ -92,7 +98,7 @@ class AuthService {
     if (name != null) data['name'] = name;
     if (avatar != null) data['avatar'] = avatar;
 
-    return _apiClient.post(url: '$_baseUrl/anonymous', data: data);
+    return _apiClient.post(url: '$_baseUrl/anonymous-login', data: data);
   }
 
   /// Change the current user's password.
@@ -118,20 +124,20 @@ class AuthService {
     _validateEmail(email);
 
     return _apiClient.post(
-      url: '$_baseUrl/reset-password',
+      url: '$_baseUrl/send-reset-password-email',
       data: {'email': email},
     );
   }
 
   /// Send an email verification to the current user.
   Future<ApiResponse> sendEmailVerification() async {
-    return _apiClient.get(url: '$_baseUrl/send-verification');
+    return _apiClient.get(url: '$_baseUrl/send-email-verification');
   }
 
   /// Get the current authenticated user's profile.
   Future<Map<String, dynamic>?> getCurrentUser() async {
     try {
-      final response = await _apiClient.get(url: '$_baseUrl/me');
+      final response = await _apiClient.get(url: '$_baseUrl/current-user');
       if (response.ok && response.data is Map) {
         return Map<String, dynamic>.from(response.data as Map);
       }
@@ -140,10 +146,5 @@ class AuthService {
       logger.warn('Failed to get current user: $e');
       return null;
     }
-  }
-
-  /// Logout the current user.
-  Future<ApiResponse> logout() async {
-    return _apiClient.post(url: '$_baseUrl/logout');
   }
 }

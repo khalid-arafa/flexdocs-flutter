@@ -20,7 +20,11 @@ class AuthUser {
 
   factory AuthUser.fromJson(Map<String, dynamic> json) {
     return AuthUser(
-      id: json['_id'] as String? ?? json['id'] as String?,
+      // Auth responses carry the id as `uid` and strip `_id`; the other two are
+      // for documents read straight out of the accounts collection.
+      id: json['uid'] as String? ??
+          json['_id'] as String? ??
+          json['id'] as String?,
       email: json['email'] as String?,
       name: json['name'] as String?,
       avatar: json['avatar'] as String?,

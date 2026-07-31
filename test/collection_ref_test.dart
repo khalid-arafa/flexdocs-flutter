@@ -5,8 +5,22 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:flexdocs_flutter/src/collection_ref.dart';
 import 'package:flexdocs_flutter/src/api_client.dart';
 import 'package:flexdocs_flutter/src/socket_service.dart';
+import 'package:flexdocs_flutter/src/models/collection_event.dart';
 import 'package:flexdocs_flutter/src/models/credentials.dart';
 import 'package:flexdocs_flutter/src/models/query_options.dart';
+
+/// Counts socket subscriptions so a test can assert none was created.
+class RecordingSocketService extends SocketService {
+  int colWatchCount = 0;
+
+  RecordingSocketService({required super.credentials});
+
+  @override
+  Stream<CollectionChangeEvent> watchCol(String colPath) {
+    colWatchCount++;
+    return super.watchCol(colPath);
+  }
+}
 
 class MockHttpAdapter implements HttpClientAdapter {
   final List<RequestOptions> requests = [];
@@ -270,6 +284,76 @@ void main() {
     test('doc() returns a DocumentRef within the collection', () {
       final docRef = col.doc('user_1');
       expect(docRef.url, '/projects/myproject/db/users/user_1');
+    });
+  });
+
+  group('CollectionRef watch', () {
+    // The snapshot is added after an async get(). A broadcast controller drops
+    // events that arrive with no listener attached, so listening even one
+    // microtask late silently loses it — which is why watch() is deliberately
+    // single-subscription.
+    test('delivers the initial snapshot to a listener that attaches late', () async {
+      mockAdapter.setResponse(statusCode: 200, data: [
+        {'_id': 'doc_1'}
+      ]);
+
+      final stream = col.watch();
+      await Future<void>.delayed(const Duration(milliseconds: 50));
+
+      final received = <CollectionChangeEvent>[];
+      final sub = stream.listen(received.add);
+      await Future<void>.delayed(const Duration(milliseconds: 50));
+
+      expect(received, hasLength(1));
+      expect(received.first.data, hasLength(1));
+      await sub.cancel();
+    });
+
+    test('a second listen fails loudly rather than hanging', () async {
+      mockAdapter.setResponse(statusCode: 200, data: []);
+
+      final stream = col.watch();
+      final first = stream.listen((_) {});
+      expect(() => stream.listen((_) {}), throwsStateError);
+      await first.cancel();
+    });
+
+    test('cancelling during the initial fetch never subscribes', () async {
+      mockAdapter.setResponse(statusCode: 200, data: []);
+      final recorder = RecordingSocketService(credentials: creds);
+      final ref = CollectionRef(
+        credentials: creds,
+        colPath: 'users',
+        apiClient: apiClient,
+        socketService: recorder,
+      );
+
+      final subscription = ref.watch().listen((_) {});
+      await subscription.cancel();
+      await Future<void>.delayed(const Duration(milliseconds: 50));
+
+      expect(recorder.colWatchCount, 0);
+    });
+
+    test('emits the initial snapshot then closes on socket shutdown', () async {
+      mockAdapter.setResponse(
+        statusCode: 200,
+        data: [
+          {'_id': '1', 'name': 'Alice'}
+        ],
+      );
+
+      final events = <CollectionChangeEvent>[];
+      var done = false;
+      col.watch().listen(events.add, onDone: () => done = true);
+
+      await Future<void>.delayed(const Duration(milliseconds: 50));
+      expect(events, hasLength(1));
+      expect(events.first.data!.first['name'], 'Alice');
+
+      socketService.close();
+      await Future<void>.delayed(const Duration(milliseconds: 50));
+      expect(done, isTrue);
     });
   });
 }

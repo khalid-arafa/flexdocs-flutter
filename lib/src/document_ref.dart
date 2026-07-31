@@ -83,18 +83,32 @@ class DocumentRef {
   /// then emits change events from the socket. Cancel the subscription
   /// to stop watching.
   Stream<DocumentChangeEvent> watch() {
+    // Single-subscription on purpose — see the note in CollectionRef.watch().
+    // A broadcast controller drops the initial snapshot when no listener has
+    // attached yet, and turns cancel-then-relisten into a permanent silent
+    // hang instead of a StateError.
     final controller = StreamController<DocumentChangeEvent>();
+    StreamSubscription<DocumentChangeEvent>? subscription;
+    var cancelled = false;
+
+    // Assigned before the initial get() is awaited: a consumer that cancels
+    // while that fetch is still in flight must still stop us subscribing.
+    controller.onCancel = () {
+      cancelled = true;
+      subscription?.cancel();
+      subscription = null;
+    };
 
     // Fetch initial data, then pipe socket events
     get().then((data) {
-      if (!controller.isClosed) {
-        controller.add(DocumentChangeEvent(
-          action: DocumentAction.update,
-          doc: data,
-        ));
-      }
+      if (cancelled || controller.isClosed) return;
 
-      final subscription = _socketService.watchDoc(_docPath).listen(
+      controller.add(DocumentChangeEvent(
+        action: DocumentAction.update,
+        doc: data,
+      ));
+
+      subscription = _socketService.watchDoc(_docPath).listen(
         (event) {
           if (!controller.isClosed) controller.add(event);
         },
@@ -103,14 +117,15 @@ class DocumentRef {
             controller.add(DocumentChangeEvent.error(error.toString()));
           }
         },
+        onDone: () {
+          if (!controller.isClosed) controller.close();
+        },
       );
-
-      controller.onCancel = () {
-        subscription.cancel();
-      };
     }).catchError((Object error) {
       if (!controller.isClosed) {
         controller.add(DocumentChangeEvent.error(error.toString()));
+        // Nothing was subscribed, so this stream has no further events to give.
+        controller.close();
       }
     });
 

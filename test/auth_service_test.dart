@@ -111,7 +111,7 @@ void main() {
   });
 
   group('AuthService API calls', () {
-    test('loginWithEmail sends POST to /auth/login', () async {
+    test('loginWithEmail sends POST to /auth/login-with-email', () async {
       mockAdapter.setResponse(
         statusCode: 200,
         data: {'token': 'jwt-token', 'user': {'email': 'test@example.com'}},
@@ -123,37 +123,37 @@ void main() {
       );
       expect(response.ok, isTrue);
       expect(mockAdapter.requests.first.method, 'POST');
-      expect(mockAdapter.requests.first.path, contains('/auth/login'));
+      expect(mockAdapter.requests.first.path, contains('/auth/login-with-email'));
     });
 
-    test('registerWithEmail sends POST to /auth/register', () async {
+    test('registerWithEmail sends POST to /auth/register-with-email', () async {
       mockAdapter.setResponse(statusCode: 201, data: {'token': 'jwt-token'});
 
       final response = await auth.registerWithEmail(
         email: 'new@example.com',
         password: 'password123',
         name: 'Test User',
-        roles: ['user'],
       );
       expect(response.ok, isTrue);
       expect(mockAdapter.requests.first.method, 'POST');
-      expect(mockAdapter.requests.first.path, contains('/auth/register'));
+      expect(
+          mockAdapter.requests.first.path, contains('/auth/register-with-email'));
     });
 
-    test('loginWithToken sends POST to /auth/token-login', () async {
+    test('loginWithToken sends POST to /auth/login-with-token', () async {
       mockAdapter.setResponse(statusCode: 200, data: {'token': 'new-jwt'});
 
       final response = await auth.loginWithToken(token: 'existing-jwt');
       expect(response.ok, isTrue);
-      expect(mockAdapter.requests.first.path, contains('/auth/token-login'));
+      expect(mockAdapter.requests.first.path, contains('/auth/login-with-token'));
     });
 
-    test('anonymousLogin sends POST to /auth/anonymous', () async {
+    test('anonymousLogin sends POST to /auth/anonymous-login', () async {
       mockAdapter.setResponse(statusCode: 200, data: {'token': 'anon-jwt'});
 
       final response = await auth.anonymousLogin(name: 'Guest');
       expect(response.ok, isTrue);
-      expect(mockAdapter.requests.first.path, contains('/auth/anonymous'));
+      expect(mockAdapter.requests.first.path, contains('/auth/anonymous-login'));
     });
 
     test('changePassword sends POST to /auth/change-password', () async {
@@ -167,35 +167,38 @@ void main() {
       expect(mockAdapter.requests.first.path, contains('/auth/change-password'));
     });
 
-    test('sendResetPasswordEmail sends POST to /auth/reset-password', () async {
+    test('sendResetPasswordEmail sends POST to /auth/send-reset-password-email',
+        () async {
       mockAdapter.setResponse(statusCode: 200, data: {'ok': true});
 
       final response =
           await auth.sendResetPasswordEmail(email: 'test@example.com');
       expect(response.ok, isTrue);
-      expect(mockAdapter.requests.first.path, contains('/auth/reset-password'));
+      expect(mockAdapter.requests.first.path,
+          contains('/auth/send-reset-password-email'));
     });
 
-    test('sendEmailVerification sends GET to /auth/send-verification', () async {
+    test('sendEmailVerification sends GET to /auth/send-email-verification',
+        () async {
       mockAdapter.setResponse(statusCode: 200, data: {'ok': true});
 
       final response = await auth.sendEmailVerification();
       expect(response.ok, isTrue);
       expect(mockAdapter.requests.first.method, 'GET');
-      expect(
-          mockAdapter.requests.first.path, contains('/auth/send-verification'));
+      expect(mockAdapter.requests.first.path,
+          contains('/auth/send-email-verification'));
     });
 
     test('getCurrentUser returns user map on success', () async {
       mockAdapter.setResponse(
         statusCode: 200,
-        data: {'_id': 'u1', 'email': 'test@example.com'},
+        data: {'uid': 'u1', 'email': 'test@example.com'},
       );
 
       final user = await auth.getCurrentUser();
       expect(user, isNotNull);
       expect(user!['email'], 'test@example.com');
-      expect(mockAdapter.requests.first.path, contains('/auth/me'));
+      expect(mockAdapter.requests.first.path, contains('/auth/current-user'));
     });
 
     test('getCurrentUser returns null on failure', () async {
@@ -205,12 +208,5 @@ void main() {
       expect(user, isNull);
     });
 
-    test('logout sends POST to /auth/logout', () async {
-      mockAdapter.setResponse(statusCode: 200, data: {'ok': true});
-
-      final response = await auth.logout();
-      expect(response.ok, isTrue);
-      expect(mockAdapter.requests.first.path, contains('/auth/logout'));
-    });
   });
 }

@@ -158,7 +158,6 @@ await auth.registerWithEmail(
   email: 'user@example.com',
   password: 'password123',
   name: 'Alice',
-  roles: ['user'],
 );
 
 // Login
@@ -183,10 +182,11 @@ await auth.sendResetPasswordEmail(email: 'user@example.com');
 
 // Email verification
 await auth.sendEmailVerification();
-
-// Logout
-await auth.logout();
 ```
+
+There is no `logout()`. The backend has no logout route and its JWTs are
+stateless, so signing out means discarding the token your app hands back from
+`ApiClientOptions.getToken`.
 
 ## Storage
 
