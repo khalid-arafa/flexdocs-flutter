@@ -1,6 +1,7 @@
 // Models
 export 'src/models/credentials.dart';
 export 'src/models/api_response.dart';
+export 'src/models/flexdocs_exception.dart';
 export 'src/models/api_client_options.dart';
 export 'src/models/socket_options.dart';
 export 'src/models/service_options.dart';

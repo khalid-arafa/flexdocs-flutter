@@ -5,9 +5,11 @@ import 'logger.dart';
 
 /// Authentication service for FlexDocs.
 ///
-/// There is deliberately no `logout()`: the backend exposes no logout route
-/// and its JWTs are stateless, so ending a session means discarding the token
-/// the app holds (the one it hands back from `ApiClientOptions.getToken`).
+/// Tokens are stateless JWTs with a long expiry, so "logging out" on this
+/// client means discarding the token the app holds (the one it hands back from
+/// `ApiClientOptions.getToken`). To end a session everywhere — on devices you
+/// no longer hold — call [revokeTokens], which invalidates every token issued
+/// to the account including the one making the call.
 class AuthService {
   final Credentials _credentials;
   final ApiClient _apiClient;
@@ -132,6 +134,47 @@ class AuthService {
   /// Send an email verification to the current user.
   Future<ApiResponse> sendEmailVerification() async {
     return _apiClient.get(url: '$_baseUrl/send-email-verification');
+  }
+
+  // ---------------------------------------------------------------------------
+  // Session lifetime
+  // ---------------------------------------------------------------------------
+
+  /// Exchange the current token for a fresh one with a full expiry window.
+  ///
+  /// Returns the new token, or null if the current one is no longer valid —
+  /// expired, or revoked by a [revokeTokens] call from another device. A null
+  /// return is the signal to send the user back to a login screen.
+  ///
+  /// The server re-verifies the presented token in full (signature, project
+  /// binding, and the revocation counter) before issuing a replacement, so
+  /// this can never launder a token that has already been invalidated.
+  ///
+  /// Call it from the `getToken` callback you give the SDK, or on app resume;
+  /// there is no background refresh timer, by design — the SDK stores no
+  /// tokens and so has nothing to refresh on your behalf.
+  Future<String?> refreshToken() async {
+    final response = await _apiClient.post(url: '$_baseUrl/refresh-token');
+    if (!response.ok) {
+      logger.warn('Token refresh failed: ${response.error}');
+      return null;
+    }
+    final data = response.data;
+    if (data is Map && data['token'] is String) return data['token'] as String;
+    return null;
+  }
+
+  /// Invalidate every token ever issued to the signed-in account.
+  ///
+  /// This is "log out everywhere", and it deliberately includes the token used
+  /// to make the call — there is no carve-out for the current session. Discard
+  /// the token the app holds immediately afterwards; every subsequent request
+  /// with it will be rejected.
+  ///
+  /// Backed by a counter on the account rather than a session store, so it is
+  /// all-or-nothing: individual sessions cannot be revoked separately.
+  Future<ApiResponse> revokeTokens() async {
+    return _apiClient.post(url: '$_baseUrl/revoke-tokens');
   }
 
   /// Get the current authenticated user's profile.

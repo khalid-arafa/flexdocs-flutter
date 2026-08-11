@@ -1,5 +1,63 @@
 # Changelog
 
+## 0.2.0 - 2026-08-11
+
+Additive throughout — no API is removed or changed shape, so upgrading from
+0.1.0 requires no code changes.
+
+### Added
+
+- **`AuthService.refreshToken()`** exchanges the current token for a fresh one,
+  returning `null` when it is no longer valid (expired, or revoked from another
+  device) — the cue to send the user back to a login screen. The server
+  re-verifies signature, project binding and the revocation counter before
+  issuing a replacement, so a token already invalidated cannot be laundered
+  through it. There is no background refresh timer by design: the SDK stores no
+  tokens and so has nothing to refresh on your behalf. Call it from your
+  `getToken` callback, or on app resume.
+- **`AuthService.revokeTokens()`** is "log out everywhere". It invalidates every
+  token issued to the account, deliberately including the one making the call,
+  so discard the token your app holds immediately afterwards. Backed by a
+  counter on the account rather than a session store, so individual sessions
+  cannot be revoked separately. Both endpoints existed on the backend and the
+  SDK simply had no knowledge of them; the 0.1.0 note claiming the backend
+  exposes no logout route is superseded by this.
+- **Typed exceptions.** `FlexDocsException` and subtypes — `Auth`, `Permission`,
+  `NotFound`, `Validation`, `RateLimit`, `Server`, `Network`, `Upload` — each
+  carrying `message`, the server's stable `code`, and `status`. Previously a
+  failure surfaced as an `ArgumentError`, a bare `Exception(String)`, or a
+  non-throwing `ApiResponse`, none of which let a caller tell "wrong password"
+  from "server unreachable" without matching on message text.
+- **`ApiResponse.code`** reads the stable identifier the API now returns on every
+  error body, and **`ApiResponse.orThrow()`** converts a response into the
+  matching typed exception. Calls still return an `ApiResponse`, so checking
+  `ok` remains valid; `orThrow()` is the opt-in for try/catch, and the only way
+  to distinguish a legitimately empty read from a denied one.
+- **`SocketServiceOptions.uploadWindow`** (default 8) caps how many upload chunks
+  may be in flight at once. Lower it to bound memory, raise it for
+  high-latency links; 1 is strict lockstep.
+
+### Fixed
+
+- **A watch registered before the socket existed was lost permanently.**
+  `connect()` awaits your `getToken` callback *before* assigning the socket, so
+  this window is wider than "before you call connect()". Both halves failed
+  silently: the subscribe was never sent, and its listener was never attached
+  either — so such a watch received no events, ever. Pending listeners are now
+  buffered and attached when the socket arrives, and the first connect replays
+  any subscribe that had nowhere to go. Re-sending one the server already has is
+  harmless: its registry is keyed by collection plus filter and drops duplicates.
+- **Uploads had no flow control.** Every chunk was pushed into the send queue in
+  one synchronous burst, buffering the whole file a second time and giving the
+  server no way to slow a client down; a disconnect mid-file was ignored after
+  the first chunk. Chunks are now gated on the server's per-chunk
+  acknowledgement, and `upload:done` waits until every chunk is acknowledged
+  rather than merely sent.
+- **Upload progress ran backwards.** The per-chunk ack is `{name, received:
+  true}` and carries no byte count, but the handler read an `uploaded` field
+  from it — so every ack reset progress to 0. Progress is now derived from the
+  chunks this client has had acknowledged.
+
 ## 0.1.0 - 2026-07-30
 
 This package is consumed as a git dependency by ref, so moving a ref forward
